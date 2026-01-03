@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-app
+  namespace: NAMESPACE_PLACEHOLDER
+  labels:
+    app: demo-app
+    pr-number: "PR_NUMBER_PLACEHOLDER"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: demo-app
+  template:
+    metadata:
+      labels:
+        app: demo-app
+        pr-number: "PR_NUMBER_PLACEHOLDER"
+    spec:
+      containers:
+      - name: demo-app
+        image: IMAGE_PLACEHOLDER
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 3000
+          name: http
+        env:
+        - name: PORT
+          value: "3000"
+        - name: ENV_NAME
+          value: "ENV_NAME_PLACEHOLDER"
+        - name: PR_NUMBER
+          value: "PR_NUMBER_PLACEHOLDER"
+        - name: BRANCH_NAME
+          value: "BRANCH_NAME_PLACEHOLDER"
+        - name: DATABASE_URL
+          value: "DB_URL_PLACEHOLDER"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
