@@ -58,6 +58,94 @@ jobs:
         run: |
           echo "✅ Docker image built and pushed!"
           echo "Image: ghcr.io/${{ github.repository_owner }}/ephemeral-demo:pr-${{ env.PR_NUMBER }}"
+
+      # Install Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.13.4
+      
+      # Provision Infrastructure with Terraform
+      - name: Provision Infrastructure
+        working-directory: ./terraform/environments/dev
+        env:
+          KUBE_CONFIG_PATH: ${{ github.workspace }}/.kube/config
+        run: |
+          # Create kubeconfig (for now, this will be a placeholder for kind)
+          # In production, you'd configure kubectl to connect to your cluster
+          echo "Setting up Kubernetes access..."
+          mkdir -p $HOME/.kube
+          # TODO: Configure kubectl for your cluster
+          
+          # Initialize Terraform
+          terraform init
+          
+          # Create terraform.tfvars
+          cat > terraform.tfvars << EOF
+          pr_number        = "${{ env.PR_NUMBER }}"
+          environment_name = "pr-${{ env.PR_NUMBER }}"
+          namespace        = "pr-${{ env.PR_NUMBER }}"
+          db_password      = "${{ secrets.DB_PASSWORD }}"
+          EOF
+          
+          # Apply Terraform
+          terraform apply -auto-approve
+          
+          # Save outputs for next steps
+          echo "DB_URL=$(terraform output -raw db_connection_string)" >> $GITHUB_ENV
+      
+      # Deploy Application to Kubernetes
+      - name: Deploy Application
+        working-directory: ./k8s
+        env:
+          PR_NUMBER: ${{ env.PR_NUMBER }}
+          NAMESPACE: pr-${{ env.PR_NUMBER }}
+          IMAGE: ghcr.io/${{ github.repository_owner }}/ephemeral-demo:pr-${{ env.PR_NUMBER }}
+          ENV_NAME: pr-${{ env.PR_NUMBER }}
+          BRANCH_NAME: ${{ env.BRANCH_NAME }}
+          DB_URL: ${{ env.DB_URL }}
+        run: |
+          chmod +x deploy.sh
+          ./deploy.sh
+      
+      # Comment on PR with deployment info
+      - name: Comment deployment status
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prNumber = ${{ env.PR_NUMBER }};
+            const envName = `pr-${prNumber}`;
+            const imageTag = `ghcr.io/${{ github.repository_owner }}/ephemeral-demo:pr-${prNumber}`;
+            
+            const body = `## 🚀 Preview Environment Deployed!
+            
+            **Environment:** \`${envName}\`
+            **Docker Image:** \`${imageTag}\`
+            **Namespace:** \`${envName}\`
+            **Database:** PostgreSQL (isolated instance)
+            
+            ### Resources Created:
+            - ✅ Kubernetes Namespace
+            - ✅ PostgreSQL Database
+            - ✅ Application Deployment
+            - ✅ Service (ClusterIP)
+            
+            ### Access:
+            To access locally:
+            \`\`\`bash
+            kubectl port-forward -n ${envName} svc/demo-app 8080:80
+            curl http://localhost:8080/
+            \`\`\`
+            
+            This environment will be automatically destroyed when the PR is closed.`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
           
       - name: Echo PR details
         run: |
@@ -84,6 +172,56 @@ jobs:
           ENV_NAME="pr-${{ env.PR_NUMBER }}"
           echo "env_name=${ENV_NAME}" >> $GITHUB_OUTPUT
           echo "Environment: $ENV_NAME"
+
+      # Setup Terraform for teardown
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.13.4
+      
+      # Destroy Infrastructure
+      - name: Destroy Infrastructure
+        working-directory: ./terraform/environments/dev
+        run: |
+          # Initialize Terraform
+          terraform init
+          
+          # Create terraform.tfvars for destroy
+          cat > terraform.tfvars << EOF
+          pr_number        = "${{ env.PR_NUMBER }}"
+          environment_name = "pr-${{ env.PR_NUMBER }}"
+          namespace        = "pr-${{ env.PR_NUMBER }}"
+          db_password      = "dummy-for-destroy"
+          EOF
+          
+          # Destroy resources
+          terraform destroy -auto-approve
+      
+      # Comment on PR
+      - name: Comment cleanup status
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const envName = `pr-${{ env.PR_NUMBER }}`;
+            
+            const body = `## 🧹 Preview Environment Destroyed
+            
+            **Environment:** \`${envName}\`
+            
+            All resources have been cleaned up:
+            - ✅ Kubernetes namespace deleted
+            - ✅ PostgreSQL database removed
+            - ✅ Application deployment removed
+            
+            Thank you for your contribution!`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
           
       - name: Echo teardown
         run: |
